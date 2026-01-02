@@ -11,7 +11,7 @@ OUTPUT_DIR = "logseq-output"
 JOPLIN_RESOURCES = "_resources"
 LOGSEQ_ASSETS = "assets"
 LOGSEQ_PAGES = "pages"
-
+# 
 # Metadata to REMOVE (cleanup)
 METADATA_BLACKLIST = [
     "latitude", "longitude", "altitude", 
