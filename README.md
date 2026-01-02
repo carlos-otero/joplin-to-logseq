@@ -25,7 +25,7 @@ This is a Python-based fork/rewrite inspired by [dasrecht/joplin-to-logseq-impor
 4. Save the export inside that folder.
 
 Your structure should look like this:
-```text
+```
 /joplin-to-logseq-importer
     ├── migrate.py
     └── joplin-input/
@@ -33,18 +33,22 @@ Your structure should look like this:
         ├── Notebook A/
         └── Notebook B/
 2. Run the Script
+```
+
 🐧 Linux / 🍏 macOS
 Open your terminal, navigate to the folder, and run:
 
-Bash
-
+```
 python3 migrate.py
+```
+
 🪟 Windows
 Open PowerShell or Command Prompt, navigate to the folder, and run:
 
-PowerShell
-
+```
 python migrate.py
+```
+
 3. Import into Logseq
 Once the script finishes, you will see a new folder named logseq-output.
 
