@@ -1,72 +1,72 @@
 # 📂 Joplin to Logseq Migration Tools
 
-Conjunto de scripts en Python para migrar una base de conocimientos completa desde **Joplin** (archivos `.md` exportados) hacia **Logseq**, preservando jerarquías, fechas y limpiando el formato.
+A suite of Python scripts designed to migrate a complete knowledge base from **Joplin** (Markdown exports) to **Logseq**, preserving hierarchies, dates, and structure while enriching content with AI.
 
-## 🚀 Scripts Incluidos
+## 🚀 Included Scripts
 
-### 1. `migrate.py` (v3.2) - El Migrador Principal
-Este script toma la exportación "RAW" de Joplin y la transforma en un grafo listo para Logseq.
+### 1. `migrate.py` (v3.5) - The Main Migrator
+Transforms the "RAW" export from Joplin into a Logseq-optimized graph.
 
-**Características Clave:**
-* **Jerarquías y Namespaces:** Convierte la estructura de carpetas de Joplin en namespaces de Logseq (ej: `Carpeta/Nota` → archivo `Carpeta.Nota.md` con propiedad `title:: Carpeta/Nota`).
-* **Gestión de Workflow:** Añade automáticamente los tags `[[Joplin]]` y `[[Por Procesar]]` para facilitar la revisión posterior.
-* **Limpieza Profunda:**
-    * Elimina metadatos basura de Joplin (`id`, `latitude`, `source_url`, etc.).
-    * Limpia entidades HTML residuales como `&nbsp;`, `&tbsp;` y `<br>`.
-* **Reparación de Enlaces:**
-    * Aplana las rutas de imágenes y PDFs: `../../_resources/img.png` → `../assets/img.png`.
-    * Convierte enlaces Markdown estándar `[Texto](Nota.md)` en Wikilinks `[[Nota]]`.
-* **Fechas:** Preserva la fecha de creación original (`created-at` timestamp) y añade enlace al Journal (`date`).
-* **Índice Maestro:** Genera un archivo `000_Indice_Migracion.md` con el listado de todo lo importado.
-* **Tareas:** Respeta los checkboxes originales (`- [ ]`) sin convertirlos forzosamente a `TODO/DONE`.
+**Key Features:**
+* **Strict Sanitization:** Cleans illegal filenames (e.g., removes leading `:` or `..` from names like `: Carlos`).
+* **Standard YAML Formatting:** Generates clean Frontmatter using standard syntax (`key: value`) compatible with Logseq, preventing duplicates.
+* **Hierarchies (Namespaces):** Converts Joplin folder structures into Logseq namespaces (e.g., `Folder/Note` → file `Folder.Note.md` with `title: Folder/Note`).
+* **Tag Management:** Merges original Joplin tags with migration management tags (`[[Joplin]]`, `[[To Process]]`) into a single line without duplicates.
+* **Deep Cleaning:**
+    * Removes junk metadata (`latitude`, `id`, `source_url`, etc.).
+    * Cleans residual HTML entities (`&nbsp;`, `&tbsp;`, `<br>`).
+* **Link Repair:**
+    * Flattens attachment paths: `../../_resources/img.png` → `../assets/img.png`.
+    * Converts standard Markdown links `[Text](Note.md)` into Wikilinks `[[Note]]`.
+* **Dates:** Preserves the original creation date (`created-at` timestamp) and adds a Journal link (`date`).
+* **Master Index:** Generates `000_Migration_Index.md` listing every imported file.
 
-### 2. `auto_tagger.py` - Etiquetado con IA (Opcional)
-Script complementario que usa Google Gemini (Flash 2.0) para leer tus notas ya migradas y añadirles:
-* Tags semánticos (ej: `tags:: [[Productividad]], [[Python]]`).
-* Un resumen de una frase (`ai-summary:: ...`).
+### 2. `auto_tagger.py` (v2.0) - AI Enrichment
+Uses Google Gemini (Flash 2.0) to analyze migrated notes.
+
+**Improvements:**
+* **Smart Tag Merging:** Reads existing tags, adds AI suggestions, removes duplicates, and rewrites the `tags:` property cleanly.
+* **Auto-Summary:** Adds an `ai-summary:` property with a one-sentence synthesis of the content.
+* **No Duplicates:** Respects existing YAML format and prevents creating double properties.
 
 ---
 
-## 🛠️ Instrucciones de Uso
+## 🛠️ Usage Instructions
 
-### Paso 1: Preparación
-1.  Exporta tus notas de Joplin en formato **Markdown + Frontmatter**.
-2.  Coloca la carpeta exportada como `joplin-input` en la raíz de este proyecto.
-3.  Asegúrate de tener Python instalado.
+### Step 1: Preparation
+1.  Export your Joplin notes in **Markdown + Frontmatter** format.
+2.  Place the exported folder as `joplin-input` in the root of this project.
+3.  Install dependencies (only required for auto_tagger):
+    ```
+    pip install google-generativeai
+    ```
 
-### Paso 2: Ejecutar Migración
+### Step 2: Run Migration
 ```
 python migrate.py
 ```
 
-El resultado aparecerá en la carpeta logseq-output.
+This will sanitize names, restructure folders, and generate files in logseq-output.
 
-Paso 3: (Opcional) Etiquetado IA
-Crea un archivo api_key.txt con tu clave de Google Gemini.
+Step 3: (Optional) AI Tagging
+Create an api_key.txt file containing your Google Gemini API Key.
 
-Ejecuta:
+Run:
 
 ```
-
 python auto_tagger.py
-
 ```
 
-Paso 4: Importar en Logseq
-Mueve el contenido de logseq-output a tu carpeta de grafo de Logseq.
+The script will read the clean notes and add semantic tags without breaking the format.
 
-En Logseq, ve a Settings > Re-index graph.
+Step 4: Import to Logseq
+Move the contents of logseq-output to your Logseq graph folder.
 
-Busca la página [[Por Procesar]] para empezar a organizar tus notas.
+In Logseq, go to Settings > Re-index graph.
 
-📋 Requisitos
+Search for the page [[To Process]] (or the tag you configured) to start organizing.
 
+📋 Requirements
 Python 3.8+
 
-Librerías (solo para el auto_tagger):
-
-```
-
-pip install google-generativeai
-
-```
+Google AI Studio Account (for the API Key)

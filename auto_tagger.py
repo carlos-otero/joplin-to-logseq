@@ -1,17 +1,16 @@
 import os
 import time
 import re
-import sys  # <--- IMPORTANTE: Asegúrate de importar sys
+import sys
 import google.generativeai as genai
 from pathlib import Path
 
 # --- FUNCIÓN PARA CARGAR LA CLAVE ---
 def load_api_key(filename="api_key.txt"):
     try:
-        # Busca el archivo en la misma carpeta que el script
         key_path = Path(__file__).parent / filename
         with open(key_path, "r", encoding="utf-8") as f:
-            key = f.read().strip() # Quita espacios y saltos de línea
+            key = f.read().strip()
             if not key:
                 print(f"❌ Error: El archivo '{filename}' está vacío.")
                 sys.exit(1)
@@ -22,19 +21,11 @@ def load_api_key(filename="api_key.txt"):
         sys.exit(1)
 
 # --- CONFIGURACIÓN ---
-# 1. Cargamos la API Key desde el archivo externo
 API_KEY = load_api_key()
-
-# 2. Carpetas
 PAGES_DIR = "logseq-output/pages"
-
-# 3. Modelo (Flash es rápido y barato/gratis)
 MODEL_NAME = "gemini-2.0-flash"
+TEST_LIMIT = 3  # 0 = Procesar TODAS las notas
 
-# 4. Seguridad: Límite de notas para probar (Pon 0 para procesar TODAS)
-TEST_LIMIT = 5  
-
-# Configurar Gemini
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel(MODEL_NAME)
 
@@ -43,20 +34,19 @@ def generate_metadata(text_content):
     Envía el texto a Gemini y pide tags y resumen.
     """
     prompt = f"""
-    Act as a professional archivist for a Personal Knowledge Management system (Logseq).
-    Analyze the following note content.
+    Actúa como un archivista profesional para un sistema Logseq.
+    Analiza la siguiente nota.
     
-    Task:
-    1. Identify 2-4 relevant categories/topics for this note.
-    2. Write a 1-sentence summary (max 20 words).
-    3. Everything in Spanish from Spain.
+    Tarea:
+    1. Identifica 2-4 categorías/temas relevantes (Tags).
+    2. Escribe un resumen de 1 frase (máx 20 palabras) en Español de España.
     
-    Format your response strictly as follows (no markdown, just the text):
-    TAGS: [[Topic1]], [[Topic2]], [[Topic3]]
-    SUMMARY: The summary text here.
+    Formato de respuesta ESTRICTO (Solo texto plano):
+    TAGS: [[Topic1]], [[Topic2]]
+    SUMMARY: Texto del resumen aquí.
     
-    Note Content:
-    {text_content[:8000]}  # Limitamos caracteres por si acaso
+    Contenido de la nota:
+    {text_content[:8000]}
     """
     
     try:
@@ -70,53 +60,105 @@ def update_note(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # Evitar procesar si ya lo hizo la IA (buscamos la marca)
-    if "ai-summary::" in content:
+    # 1. Verificar si ya tiene resumen IA para no gastar tokens
+    if "ai-summary:" in content:
         print(f"⏩ Saltando (Ya procesado): {file_path.name}")
         return False
 
-    # Llamar a la IA
-    print(f"🧠 Analizando: {file_path.name}...")
-    ai_response = generate_metadata(content)
+    # 2. Extraer Frontmatter existente
+    yaml_pattern = r"^---\n(.*?)\n---\n"
+    match = re.search(yaml_pattern, content, re.DOTALL)
     
-    if not ai_response:
+    if not match:
+        print(f"⚠️ Saltando (Sin Frontmatter): {file_path.name}")
         return False
 
-    # Procesar respuesta (Parseo simple)
-    tags_line = ""
-    summary_line = ""
+    original_block = match.group(1)
+    
+    # 3. Llamar a la IA
+    print(f"🧠 Analizando: {file_path.name}...")
+    ai_response = generate_metadata(content)
+    if not ai_response: return False
+
+    # 4. Parsear respuesta de la IA
+    new_tags = []
+    new_summary = ""
     
     for line in ai_response.split('\n'):
         if line.startswith("TAGS:"):
-            tags_line = line.replace("TAGS:", "tags::").strip()
+            # Extraer tags y limpiar
+            raw_tags = line.replace("TAGS:", "").strip().split(',')
+            for t in raw_tags:
+                t = t.strip()
+                if t: new_tags.append(t)
         elif line.startswith("SUMMARY:"):
-            summary_line = line.replace("SUMMARY:", "ai-summary::").strip()
+            new_summary = line.replace("SUMMARY:", "").strip()
 
-    if not tags_line or not summary_line:
-        print("   ❌ Respuesta IA no válida, saltando.")
+    if not new_summary:
+        print("   ❌ Respuesta IA incompleta.")
         return False
 
-    # Inyectar en el FrontMatter (Bloque YAML)
-    # Buscamos el segundo '---'
-    parts = content.split('---', 2)
+    # 5. Reconstruir el Frontmatter Fusionando Tags
+    new_lines = []
+    tags_written = False
     
-    if len(parts) >= 3:
-        # Existe Frontmatter, lo insertamos al final del bloque
-        frontmatter = parts[1]
-        body = parts[2]
+    for line in original_block.split('\n'):
+        if not line.strip(): continue
         
-        # Añadimos las nuevas propiedades
-        new_frontmatter = frontmatter.rstrip() + f"\n{tags_line}\n{summary_line}\n"
+        # Detectar línea de tags existente (tags: ...)
+        if line.lower().startswith("tags:"):
+            parts = line.split(":", 1)
+            existing_val = parts[1].strip()
+            
+            # Crear set para evitar duplicados
+            combined_tags = set()
+            
+            # Añadir existentes
+            for t in existing_val.split(','):
+                t = t.strip()
+                if t: combined_tags.add(t)
+            
+            # Añadir nuevos de la IA
+            for t in new_tags:
+                # Asegurar formato [[Tag]]
+                if not t.startswith('[[') and not t.endswith(']]'):
+                    combined_tags.add(f"[[{t}]]")
+                else:
+                    combined_tags.add(t)
+            
+            # Convertir a lista ordenada y escribir
+            final_tags_str = ", ".join(sorted(list(combined_tags)))
+            new_lines.append(f"tags: {final_tags_str}")
+            tags_written = True
         
-        new_content = f"---{new_frontmatter}---{body}"
-    else:
-        # No existe Frontmatter, lo creamos
-        new_content = f"---\n{tags_line}\n{summary_line}\n---\n{content}"
+        # Evitar re-escribir ai-summary si ya existiera (por seguridad)
+        elif line.lower().startswith("ai-summary:"):
+            continue 
+            
+        else:
+            new_lines.append(line)
+
+    # Si no existía línea de tags, la creamos ahora
+    if not tags_written and new_tags:
+        clean_new_tags = []
+        for t in new_tags:
+             if not t.startswith('[[') and not t.endswith(']]'):
+                    clean_new_tags.append(f"[[{t}]]")
+             else:
+                    clean_new_tags.append(t)
+        new_lines.append(f"tags: {', '.join(clean_new_tags)}")
+
+    # Añadimos el resumen al final del bloque
+    new_lines.append(f"ai-summary: {new_summary}")
+
+    # 6. Escribir archivo
+    new_frontmatter = "---\n" + "\n".join(new_lines) + "\n---\n"
+    new_content = content.replace(match.group(0), new_frontmatter)
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
     
-    print(f"   ✅ Etiquetado: {tags_line}")
+    print(f"   ✅ Actualizado (Tags fusionados + Resumen)")
     return True
 
 def main():
@@ -126,21 +168,19 @@ def main():
         return
 
     files = [f for f in path.iterdir() if f.is_file() and f.suffix == '.md']
-    print(f"📂 Encontradas {len(files)} notas.")
+    print(f"📂 Encontradas {len(files)} notas para procesar con IA.")
     
     count = 0
     for file in files:
-        # Control de límite de prueba
         if TEST_LIMIT > 0 and count >= TEST_LIMIT:
-            print(f"\n🛑 Límite de prueba alcanzado ({TEST_LIMIT}). Cambia TEST_LIMIT = 0 en el script para procesar todo.")
+            print(f"🛑 Límite de prueba alcanzado ({TEST_LIMIT}).")
             break
 
         success = update_note(file)
         
         if success:
             count += 1
-            # 🛑 RATE LIMIT: Pausa de seguridad para no saturar la API gratuita (15 peticiones/min aprox)
-            time.sleep(4) 
+            time.sleep(4) # Rate limit preventivo
 
 if __name__ == "__main__":
     main()
