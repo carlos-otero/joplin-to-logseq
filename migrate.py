@@ -2,6 +2,7 @@ import os
 import shutil
 import re
 import sys
+import html
 from pathlib import Path
 from datetime import datetime
 
@@ -12,60 +13,149 @@ JOPLIN_RESOURCES = "_resources"
 LOGSEQ_ASSETS = "assets"
 LOGSEQ_PAGES = "pages"
 
-# Metadata to REMOVE (cleanup)
+# Tags automáticos para gestión de la migración
+AUTO_TAGS = "[[Joplin]], [[Por Procesar]]"
+
+# Metadatos a ELIMINAR
 METADATA_BLACKLIST = [
     "latitude", "longitude", "altitude", 
     "author", "source", "source_url", 
     "is_todo", "todo_due", "todo_completed", 
-    "id", "parent_id", "created_time", "updated_time", 
-    "type_", "title" 
+    "id", "parent_id", "type_"
 ]
 
-def clean_frontmatter(content):
-    """
-    Parses the YAML block (between ---) and removes unwanted lines.
-    Converts Joplin 'tags:' to Logseq 'tags::'.
-    """
+def parse_joplin_date(date_str):
+    try:
+        dt = datetime.strptime(str(date_str).strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            dt = datetime.fromisoformat(str(date_str).strip())
+        except ValueError:
+            return None, None
+    
+    timestamp = int(dt.timestamp() * 1000)
+    date_link = f"[[{dt.strftime('%Y-%m-%d')}]]"
+    return timestamp, date_link
+
+def process_frontmatter(content, original_filename, hierarchy_title):
     yaml_pattern = r"^---\n(.*?)\n---\n"
     match = re.search(yaml_pattern, content, re.DOTALL)
     
-    if not match:
-        return content
-
-    original_block = match.group(1)
-    new_lines = []
+    new_properties = {}
+    existing_lines = []
+    original_title_clean = Path(original_filename).stem
     
-    for line in original_block.split('\n'):
-        if not line.strip():
-            continue
-        key = line.split(':')[0].strip()
-        if key in METADATA_BLACKLIST:
-            continue
-        if key == "tags":
-            line = line.replace("tags:", "tags::")
-        new_lines.append(line)
+    if match:
+        original_block = match.group(1)
+        for line in original_block.split('\n'):
+            if not line.strip() or ":" not in line: continue
+            
+            key, val = line.split(':', 1)
+            key = key.strip()
+            val = val.strip()
 
-    if not new_lines:
-        return re.sub(yaml_pattern, "", content)
+            if key in METADATA_BLACKLIST: continue
+            
+            if key == "created_time":
+                ts, dl = parse_joplin_date(val)
+                if ts:
+                    new_properties['created-at'] = ts
+                    new_properties['date'] = dl
+                continue
+            
+            if key == "updated_time":
+                ts, _ = parse_joplin_date(val)
+                if ts: new_properties['updated-at'] = ts
+                continue
+
+            if key == "title":
+                val = val.strip('"').strip("'")
+                if val and val != original_title_clean:
+                    new_properties['alias'] = val
+                continue
+                
+            if key == "tags":
+                # Mantenemos los tags originales de Joplin
+                existing_lines.append(line.replace("tags:", "tags::"))
+            else:
+                existing_lines.append(line)
     
-    new_block = "---\n" + "\n".join(new_lines) + "\n---\n"
-    return content.replace(match.group(0), new_block)
+    # --- CONSTRUCCIÓN DEL NUEVO FRONTMATTER ---
+    new_block = "---\n"
+    new_block += f"title:: {hierarchy_title}\n"
+    
+    # INYECCIÓN DE TAGS DE MIGRACIÓN (Aquí está la magia)
+    # Logseq permite múltiples líneas 'tags::', las fusionará.
+    new_block += f"tags:: {AUTO_TAGS}\n"
+    
+    if 'alias' in new_properties:
+        new_block += f"alias:: {new_properties['alias']}\n"
+    else:
+        new_block += f"alias:: {original_title_clean}\n"
+
+    if 'date' in new_properties: new_block += f"date:: {new_properties['date']}\n"
+    if 'created-at' in new_properties: new_block += f"created-at:: {new_properties['created-at']}\n"
+    if 'updated-at' in new_properties: new_block += f"updated-at:: {new_properties['updated-at']}\n"
+
+    for line in existing_lines:
+        new_block += f"{line}\n"
+        
+    new_block += "---\n"
+    
+    if match:
+        return content.replace(match.group(0), new_block)
+    else:
+        return new_block + content
+
+def clean_and_convert_content(content):
+    # 1. Adjuntos (Deep folder fix)
+    content = re.sub(r'\((?:(?:\.|)\./)*_resources/', '(../assets/', content)
+    
+    # 2. Limpieza de Entidades HTML (&nbsp;, &tbsp;)
+    content = re.sub(r'&nbsp;?', ' ', content, flags=re.IGNORECASE)
+    content = re.sub(r'&tbsp;?', ' ', content, flags=re.IGNORECASE)
+    
+    # 3. Limpieza de etiquetas basura
+    content = re.sub(r'<br class="jop-noMdConv">', '', content)
+    content = re.sub(r'<br>', '\n', content)
+    
+    # 4. Arreglo de Enlaces Internos [Texto](Nota.md) -> [[Nota]]
+    def link_replacer(match):
+        text = match.group(1)
+        path = match.group(2)
+        if "_resources" in path or "http" in path or "assets" in path:
+            return match.group(0)
+        
+        filename = Path(path).stem
+        return f"[[{filename}]]"
+
+    content = re.sub(r'\[([^\]]+)\]\(([^)]+\.md)\)', link_replacer, content)
+
+    return content
 
 def get_unique_filename(directory, filename):
-    """
-    Checks if a file exists in the directory. If it does, adds a counter
-    to the filename (e.g., file_1.md, file_2.md) to make it unique.
-    """
     name, ext = os.path.splitext(filename)
     counter = 1
     new_filename = filename
-    
-    # While a file with this name exists, keep adding numbers
     while (directory / new_filename).exists():
         new_filename = f"{name}_{counter}{ext}"
         counter += 1
-        
     return new_filename
+
+def generate_index_file(pages_dir, migrated_files):
+    index_name = "000_Indice_Migracion.md"
+    content = f"---\ntitle:: Índice de Migración Joplin\ndate:: [[{datetime.now().strftime('%Y-%m-%d')}]]\n---\n"
+    content += "### 🚀 Resumen de Importación\n"
+    content += f"Importado el: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+    content += f"Total notas: {len(migrated_files)}\n\n"
+    content += "### 📂 Notas Importadas\n"
+    migrated_files.sort()
+    for filename in migrated_files:
+        link_name = Path(filename).stem
+        content += f"- [[{link_name}]]\n"
+    with open(pages_dir / index_name, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"🗺️  Índice maestro creado: {index_name}")
 
 def main():
     start_time = datetime.now()
@@ -74,7 +164,7 @@ def main():
     out_path = base_path / OUTPUT_DIR
     
     if not src_path.exists():
-        print(f"❌ CRITICAL ERROR: Folder '{SOURCE_DIR}' not found.")
+        print(f"❌ ERROR: No encuentro la carpeta '{SOURCE_DIR}'")
         sys.exit(1)
 
     if out_path.exists():
@@ -83,96 +173,66 @@ def main():
     (out_path / LOGSEQ_ASSETS).mkdir(parents=True, exist_ok=True)
     (out_path / LOGSEQ_PAGES).mkdir(parents=True, exist_ok=True)
 
-    print(f"🚀 Starting Migration (Anti-Duplicate + Sanitizer Mode) in: {base_path}")
-    print("---------------------------------------------------")
-
-    # ---------------------------------------------------------
-    # PHASE 1: IMAGES
-    # ---------------------------------------------------------
+    print(f"🚀 Iniciando Migración v3.2 (Tags + Limpieza + Jerarquías)")
+    
+    # PHASE 1: ASSETS
     src_resources = src_path / JOPLIN_RESOURCES
     dest_assets = out_path / LOGSEQ_ASSETS
-    assets_count = 0
-    
     if src_resources.exists():
-        print(f"📦 Moving image library...")
         files = [f for f in src_resources.iterdir() if f.is_file()]
         for item in files:
             shutil.copy2(item, dest_assets / item.name)
-            assets_count += 1
-        print(f"✅ PHASE 1 COMPLETE: {assets_count} images copied.")
-    else:
-        print("⚠️ WARNING: '_resources' folder not found.")
+        print(f"📦 Assets copiados: {len(files)}")
 
-    # ---------------------------------------------------------
     # PHASE 2: NOTES
-    # ---------------------------------------------------------
-    print("---------------------------------------------------")
-    print("📝 Processing notes...")
-    
-    notes_found = 0
-    notes_processed = 0
-    notes_failed = []
-
     pages_dir = out_path / LOGSEQ_PAGES
-
+    migrated_filenames = []
+    
     for root, dirs, files in os.walk(src_path):
-        if JOPLIN_RESOURCES in dirs:
-            dirs.remove(JOPLIN_RESOURCES)
+        if JOPLIN_RESOURCES in dirs: dirs.remove(JOPLIN_RESOURCES)
         
         for file in files:
             if file.endswith(".md"):
-                notes_found += 1
                 try:
                     original_file_path = Path(root) / file
                     
-                    # 1. Flatten Namespace
+                    # Jerarquía
                     rel_path = original_file_path.relative_to(src_path)
-                    if rel_path.parent.parts:
-                        base_name = "___".join(rel_path.parent.parts) + "___" + file
-                    else:
-                        base_name = file
-                    
-                    # --- FIX: Remove double dots (..md -> .md) ---
-                    # This forces the filename to match the "clean" version.
-                    # Since the clean version might already exist, get_unique_filename below
-                    # will automatically rename this one to _1.md, _2.md, etc.
-                    if base_name.endswith("..md"):
-                         base_name = base_name[:-4] + ".md"
-                    
-                    # 2. ANTI-DUPLICATE MAGIC
-                    unique_name = get_unique_filename(pages_dir, base_name)
-                    dest_file_path = pages_dir / unique_name
+                    parts = list(rel_path.parent.parts)
+                    file_stem = file[:-3]
+                    if file.endswith("..md"): file_stem = file[:-4]
 
-                    # 3. Read content
+                    if parts:
+                        filename_structure = ".".join(parts) + "." + file_stem + ".md"
+                        hierarchy_title = "/".join(parts) + "/" + file_stem
+                    else:
+                        filename_structure = file_stem + ".md"
+                        hierarchy_title = file_stem
+                    
+                    unique_name = get_unique_filename(pages_dir, filename_structure)
+                    
+                    # Lectura y Transformación
                     with open(original_file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
 
-                    # 4. Transformations
-                    content = clean_frontmatter(content)
-                    content = re.sub(r'\((?:\.\./)?_resources/', '(../assets/', content)
-                    content = re.sub(r'<br class="jop-noMdConv">', '', content)
+                    content = process_frontmatter(content, file, hierarchy_title)
+                    content = clean_and_convert_content(content)
 
-                    # 5. Write content
-                    with open(dest_file_path, 'w', encoding='utf-8') as f:
+                    # Escritura
+                    with open(pages_dir / unique_name, 'w', encoding='utf-8') as f:
                         f.write(content)
                     
-                    notes_processed += 1
+                    migrated_filenames.append(unique_name)
                     
                 except Exception as e:
-                    print(f"❌ Error in note: {file} -> {e}")
-                    notes_failed.append(file)
+                    print(f"❌ Error en: {file} -> {e}")
 
-    # ---------------------------------------------------------
-    # PHASE 3: SUMMARY
-    # ---------------------------------------------------------
-    duration = datetime.now() - start_time
-    print("---------------------------------------------------")
-    print(f"🏁 DONE in {duration}")
-    print(f"📂 Output: {out_path}")
-    print(f"✅ Notes Created: {notes_processed}/{notes_found}")
-    
-    if notes_failed:
-        print(f"❌ Failed: {len(notes_failed)}")
+    # PHASE 3: INDEX
+    if migrated_filenames:
+        generate_index_file(pages_dir, migrated_filenames)
+
+    print(f"🏁 TERMINADO en {datetime.now() - start_time}")
+    print(f"✅ Notas migradas: {len(migrated_filenames)}")
 
 if __name__ == "__main__":
     main()

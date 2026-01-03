@@ -1,64 +1,72 @@
-# Joplin to Logseq Importer (Python)
+# 📂 Joplin to Logseq Migration Tools
 
-A robust Python script to migrate your notes from **Joplin** to **Logseq**, preserving your folder hierarchy (using namespaces), fixing image links, and cleaning up metadata.
+Conjunto de scripts en Python para migrar una base de conocimientos completa desde **Joplin** (archivos `.md` exportados) hacia **Logseq**, preservando jerarquías, fechas y limpiando el formato.
 
-This is a Python-based fork/rewrite inspired by [dasrecht/joplin-to-logseq-importer](https://github.com/dasrecht/joplin-to-logseq-importer).
+## 🚀 Scripts Incluidos
 
-## 🚀 Features
+### 1. `migrate.py` (v3.2) - El Migrador Principal
+Este script toma la exportación "RAW" de Joplin y la transforma en un grafo listo para Logseq.
 
-- **Namespace Flattening:** Converts Joplin folder structures (e.g., `Personal/Work/Note.md`) into Logseq-compatible namespaces (e.g., `Personal___Work___Note.md`).
-- **Asset Migration:** Automatically finds and moves all images/attachments from `_resources` to Logseq's `assets` folder.
-- **Link Fixing:** Updates all Markdown links in your notes to point correctly to the new `../assets/` location.
-- **Metadata Cleanup:** Removes unnecessary Joplin frontmatter (GPS coordinates, internal IDs, etc.) while keeping and formatting `#tags` correctly for Logseq (`tags::`).
-- **Integrity Check:** Provides a detailed summary report ensuring 100% of your notes and images were processed.
+**Características Clave:**
+* **Jerarquías y Namespaces:** Convierte la estructura de carpetas de Joplin en namespaces de Logseq (ej: `Carpeta/Nota` → archivo `Carpeta.Nota.md` con propiedad `title:: Carpeta/Nota`).
+* **Gestión de Workflow:** Añade automáticamente los tags `[[Joplin]]` y `[[Por Procesar]]` para facilitar la revisión posterior.
+* **Limpieza Profunda:**
+    * Elimina metadatos basura de Joplin (`id`, `latitude`, `source_url`, etc.).
+    * Limpia entidades HTML residuales como `&nbsp;`, `&tbsp;` y `<br>`.
+* **Reparación de Enlaces:**
+    * Aplana las rutas de imágenes y PDFs: `../../_resources/img.png` → `../assets/img.png`.
+    * Convierte enlaces Markdown estándar `[Texto](Nota.md)` en Wikilinks `[[Nota]]`.
+* **Fechas:** Preserva la fecha de creación original (`created-at` timestamp) y añade enlace al Journal (`date`).
+* **Índice Maestro:** Genera un archivo `000_Indice_Migracion.md` con el listado de todo lo importado.
+* **Tareas:** Respeta los checkboxes originales (`- [ ]`) sin convertirlos forzosamente a `TODO/DONE`.
 
-## 📋 Prerequisites
+### 2. `auto_tagger.py` - Etiquetado con IA (Opcional)
+Script complementario que usa Google Gemini (Flash 2.0) para leer tus notas ya migradas y añadirles:
+* Tags semánticos (ej: `tags:: [[Productividad]], [[Python]]`).
+* Un resumen de una frase (`ai-summary:: ...`).
 
-- **Python 3** (Pre-installed on most Linux/macOS systems. Available for Windows on the Microsoft Store).
+---
 
-## 🛠️ Usage Guide
+## 🛠️ Instrucciones de Uso
 
-### 1. Export from Joplin
-1. Open Joplin on your computer.
-2. Go to **File > Export all > MD - Markdown + Front Matter**.
-3. Create a folder named `joplin-input` in the same directory as this script.
-4. Save the export inside that folder.
+### Paso 1: Preparación
+1.  Exporta tus notas de Joplin en formato **Markdown + Frontmatter**.
+2.  Coloca la carpeta exportada como `joplin-input` en la raíz de este proyecto.
+3.  Asegúrate de tener Python instalado.
 
-Your structure should look like this:
-```
-/joplin-to-logseq-importer
-    ├── migrate.py
-    └── joplin-input/
-        ├── _resources/
-        ├── Notebook A/
-        └── Notebook B/
-2. Run the Script
-```
-
-🐧 Linux / 🍏 macOS
-Open your terminal, navigate to the folder, and run:
-
-```
-python3 migrate.py
-```
-
-🪟 Windows
-Open PowerShell or Command Prompt, navigate to the folder, and run:
-
+### Paso 2: Ejecutar Migración
 ```
 python migrate.py
 ```
 
-3. Import into Logseq
-Once the script finishes, you will see a new folder named logseq-output.
+El resultado aparecerá en la carpeta logseq-output.
 
-Inside, you will find pages and assets.
+Paso 3: (Opcional) Etiquetado IA
+Crea un archivo api_key.txt con tu clave de Google Gemini.
 
-Copy the contents of logseq-output directly into your main Logseq graph folder.
+Ejecuta:
 
-Note: If asked, merge the folders.
+```
 
-Open Logseq and "Re-index" your graph to see your new notes!
+python auto_tagger.py
 
-⚠️ Disclaimer
-Always backup your data before performing mass migrations. This script is provided "as is" without warranty of any kind.
+```
+
+Paso 4: Importar en Logseq
+Mueve el contenido de logseq-output a tu carpeta de grafo de Logseq.
+
+En Logseq, ve a Settings > Re-index graph.
+
+Busca la página [[Por Procesar]] para empezar a organizar tus notas.
+
+📋 Requisitos
+
+Python 3.8+
+
+Librerías (solo para el auto_tagger):
+
+```
+
+pip install google-generativeai
+
+```
